@@ -1,0 +1,41 @@
+node('NODE_SLAVE'){
+   stage('SCM Checkout'){
+        git url:'https://github.com/ramichlagou/java-web-app-docker.git' , branch:'main'
+   }
+   withMaven(jdk: 'JAVA_11', maven: 'MAVEN362_SLAVE') {
+       stage(" Maven Clean Package And SonarQube Test"){
+           sh""" mvn clean package
+             mvn sonar:sonar \ -Dsonar.projectKey=myapp \ -Dsonar.host.url=http://172.16.0.102:9000 \ -Dsonar.login=40a296fe860660a0a662c85587bb3a1bdc035fbb
+            """
+       }
+   }
+   withCredentials([usernamePassword(credentialsId: 'dockerHub-id', passwordVariable:'PASSWORD', usernameVariable: 'USERNAME')]) {
+       stage('Build & Push Docker Image'){
+           println "BEGIN CREATE DOCKER IMAGES"
+           sh""" whoami
+           docker build -t ${params.dockerImageName}:${params.dockerVersion} . 
+           echo "publish Image to dockerHub" 
+           docker login -u ${USERNAME} -p ${PASSWORD}
+           docker push ${params.dockerImageName}:${params.dockerVersion}
+           echo "Purge docker Image" 
+           docker rmi ${params.dockerImageName}:${params.dockerVersion}
+           """ 
+       }
+   }
+   stage('deploy WAR in nexus repository'){
+       nexusArtifactUploader artifacts: [[artifactId: 'java-web-app',
+       classifier: '', 
+       file: 'target/java-web-app-1.0.war',
+       type: 'war']], 
+       credentialsId: 'nexus-id',
+       groupId: 'com.mt',
+       nexusUrl: '172.16.0.100:8081',
+       nexusVersion: 'nexus3',
+       protocol: 'http',
+       repository: 'pfa_demo',
+       version: '1.0-SNAPSHOT' 
+   }
+   stage('Deploying App to Kubernetes'){
+      sh "kubectl apply -f deployMyapp.yml" 
+   }
+}
